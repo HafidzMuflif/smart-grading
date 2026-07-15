@@ -1,0 +1,386 @@
+/* Global Styles */
+body {
+    background-color: #f8f9fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Card Styles */
+.card {
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 2px solid #007bff;
+    font-weight: 600;
+}
+
+/* Dashboard Stats */
+.display-4 {
+    font-weight: 700;
+}
+
+/* Table Styles */
+.table thead th {
+    background-color: #007bff;
+    color: white;
+    border: none;
+}
+
+.table tbody tr:hover {
+    background-color: #e3f2fd;
+}
+
+/* Form Styles */
+.form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+/* Button Styles */
+.btn-primary {
+    background-color: #007bff;
+    border: none;
+    padding: 10px 20px;
+    font-weight: 600;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+    transform: scale(1.02);
+}
+
+/* Loading Spinner */
+.spinner-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.spinner-overlay.active {
+    display: flex;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .display-4 {
+        font-size: 2rem;
+    }
+}
+
+/* Upload Zone */
+.upload-zone {
+    border: 2px dashed #007bff;
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    background-color: #f8f9fa;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.upload-zone:hover {
+    background-color: #e3f2fd;
+    border-color: #0056b3;
+}
+
+.upload-zone.dragover {
+    background-color: #e3f2fd;
+    border-color: #0056b3;
+}
+
+/* Progress Bar */
+.progress {
+    height: 20px;
+    border-radius: 10px;
+}
+
+.progress-bar {
+    background: linear-gradient(90deg, #007bff, #00bcd4);
+}
+
+/* Alert Styles */
+.alert {
+    border-radius: 10px;
+    border: none;
+}
+
+/* Login Page */
+.login-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #007bff, #00bcd4);
+}
+
+.login-card {
+    background: white;
+    border-radius: 20px;
+    padding: 40px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 400px;
+}
+
+/* ============================================
+   LOADING OVERLAY
+   ============================================ */
+.spinner-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 99999;
+    backdrop-filter: blur(4px);
+    transition: all 0.3s ease;
+}
+
+.spinner-overlay.active {
+    display: flex;
+}
+
+.spinner-container {
+    text-align: center;
+    padding: 40px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    backdrop-filter: blur(8px);
+}
+
+.spinner-container .spinner-border {
+    width: 4rem;
+    height: 4rem;
+    border-width: 0.3rem;
+}
+
+.spinner-container .loading-message {
+    color: #fff;
+    font-size: 1.1rem;
+    margin-top: 1.5rem;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+
+/* ============================================
+   UPLOAD ZONE
+   ============================================ */
+.upload-zone {
+    border: 2px dashed #cbd5e0;
+    border-radius: 12px;
+    padding: 40px 20px;
+    text-align: center;
+    background: #f7fafc;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    min-height: 150px;
+}
+
+.upload-zone:hover {
+    background: #edf2f7;
+    border-color: #667eea;
+}
+
+.upload-zone.dragover {
+    background: #e0e7ff;
+    border-color: #667eea;
+    border-width: 3px;
+    transform: scale(1.02);
+}
+
+.upload-zone .upload-icon {
+    font-size: 3rem;
+    color: #a0aec0;
+    margin-bottom: 15px;
+}
+
+.upload-zone .upload-text {
+    color: #4a5568;
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+.upload-zone .upload-subtext {
+    color: #a0aec0;
+    font-size: 0.9rem;
+}
+
+.upload-zone .file-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.upload-zone .file-info .file-details {
+    flex: 1;
+    text-align: left;
+}
+
+.upload-zone .file-info .file-details strong {
+    display: block;
+    margin-bottom: 4px;
+}
+
+.upload-zone .file-info .remove-file {
+    flex-shrink: 0;
+}
+
+/* ============================================
+   TOAST NOTIFICATIONS
+   ============================================ */
+.toast-notification {
+    animation: slideInRight 0.3s ease;
+    max-width: 450px;
+    font-size: 0.95rem;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(120%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* ============================================
+   TABLE STYLES
+   ============================================ */
+.table th[data-sort] {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 30px;
+}
+
+.table th[data-sort]:hover {
+    background: rgba(102, 126, 234, 0.08);
+}
+
+.table th[data-sort]::after {
+    content: '\f0dc';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #a0aec0;
+    font-size: 0.8rem;
+}
+
+.table th[data-sort].asc::after {
+    content: '\f0de';
+    color: #667eea;
+}
+
+.table th[data-sort].desc::after {
+    content: '\f0dd';
+    color: #667eea;
+}
+
+/* ============================================
+   FORM VALIDATION
+   ============================================ */
+.form-control.is-valid {
+    border-color: #48bb78;
+    box-shadow: 0 0 0 3px rgba(72, 187, 120, 0.15);
+}
+
+.form-control.is-invalid {
+    border-color: #fc8181;
+    box-shadow: 0 0 0 3px rgba(252, 129, 129, 0.15);
+}
+
+.invalid-feedback {
+    display: block;
+    color: #fc8181;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
+/* ============================================
+   RESPONSIVE TABLES
+   ============================================ */
+@media (max-width: 768px) {
+    .table-responsive {
+        border: 0;
+    }
+    
+    .table thead {
+        display: none;
+    }
+    
+    .table tbody tr {
+        display: block;
+        margin-bottom: 1rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px;
+    }
+    
+    .table tbody td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 10px;
+        border: none;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .table tbody td:last-child {
+        border-bottom: none;
+    }
+    
+    .table tbody td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        color: #4a5568;
+        margin-right: 10px;
+    }
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+@media print {
+    .no-print {
+        display: none !important;
+    }
+    
+    .card {
+        border: 1px solid #ddd !important;
+        box-shadow: none !important;
+    }
+    
+    .btn {
+        display: none !important;
+    }
+}

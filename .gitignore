@@ -1,0 +1,33 @@
+# ==== Rahasia / kredensial (JANGAN pernah di-commit) ====
+backend/.env
+.env
+*.env
+!.env.example
+
+# ==== Python ====
+backend/venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ==== File upload & hasil generate (tidak perlu ikut repo) ====
+frontend/uploads/*
+!frontend/uploads/.gitkeep
+!frontend/uploads/**/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/reports/*
+!backend/reports/.gitkeep
+
+# ==== Log ====
+frontend/logs/*.log
+backend/*.log
+
+# ==== OS / Editor ====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ==== Node (kalau nanti ada) ====
+node_modules/
