@@ -125,7 +125,7 @@ include '../includes/header.php';
                         </div>
                     <?php endif; ?>
 
-                    <div class="alert alert-info">
+                    <div class="alert alert-info alert-permanent">
                         <i class="fas fa-robot"></i> Pilih banyak file PDF sekaligus (jawaban seluruh/sebagian mahasiswa di kelas ini).
                         AI akan membaca nama & NIM di tiap file, lalu otomatis mencocokkan ke mahasiswa terdaftar.
                         <strong>Setiap file memanggil AI satu kali</strong> — perhatikan jumlah file untuk efisiensi kuota API.

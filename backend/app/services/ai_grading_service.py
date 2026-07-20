@@ -29,7 +29,7 @@ class AIGradingService:
 
     def _pdf_to_images(self, pdf_path: str, dpi: int = 150) -> List[bytes]:
         """Konversi tiap halaman PDF jadi gambar PNG (raw bytes) untuk dikirim ke Gemini vision."""
-        images = convert_from_path(pdf_path, dpi=dpi)
+        images = convert_from_path(pdf_path, dpi=dpi, poppler_path=Config.POPPLER_PATH)
         encoded = []
         for img in images:
             buffer = BytesIO()

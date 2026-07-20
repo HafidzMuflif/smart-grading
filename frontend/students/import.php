@@ -10,6 +10,14 @@ requireAdmin();
 $page_title = 'Import Mahasiswa dari Excel';
 $results = null;
 
+try {
+    $db = Database::getInstance()->getConnection();
+    $courseNames = $db->query("SELECT DISTINCT course_name FROM classes ORDER BY course_name")->fetchAll(PDO::FETCH_COLUMN);
+} catch (PDOException $e) {
+    error_log("Error fetching course names: " . $e->getMessage());
+    $courseNames = [];
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
         $error = 'Token keamanan tidak valid. Silahkan coba lagi.';
@@ -17,13 +25,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'File Excel (.xlsx) wajib diupload.';
     } else {
         $extension = strtolower(pathinfo($_FILES['excel_file']['name'], PATHINFO_EXTENSION));
+        $selectedCourse = trim($_POST['course_name'] ?? '');
+
         if ($extension !== 'xlsx') {
             $error = 'File harus berformat .xlsx (Excel 2007 ke atas). File .xls lama tidak didukung.';
         } else {
             try {
-                $db = Database::getInstance()->getConnection();
-
-                // Simpan file sementara untuk dibaca
                 $tmpDir = __DIR__ . '/../uploads/imports';
                 if (!is_dir($tmpDir)) {
                     mkdir($tmpDir, 0777, true);
@@ -31,66 +38,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $tmpPath = $tmpDir . '/' . uniqid() . '_' . basename($_FILES['excel_file']['name']);
                 move_uploaded_file($_FILES['excel_file']['tmp_name'], $tmpPath);
 
-                $rows = readXlsxRows($tmpPath);
-                @unlink($tmpPath); // hapus file sementara setelah dibaca
+                $sheets = readXlsxAllSheets($tmpPath);
+                @unlink($tmpPath);
 
-                // Baris pertama dianggap header, mulai dari baris ke-2
                 $success = [];
                 $failed = [];
 
-                // Cache daftar kelas (nama -> id) supaya tidak query berulang
-                $classMap = [];
-                $classRows = $db->query("SELECT id, name FROM classes")->fetchAll(PDO::FETCH_ASSOC);
-                foreach ($classRows as $c) {
-                    $classMap[strtolower(trim($c['name']))] = $c['id'];
-                }
+                foreach ($sheets as $sheetName => $rows) {
+                    $className = trim($sheetName);
 
-                for ($i = 1; $i < count($rows); $i++) {
-                    $row = $rows[$i];
-                    $name = trim($row[0] ?? '');
-                    $nim = trim($row[1] ?? '');
-                    $className = trim($row[2] ?? '');
-
-                    if (empty($name) && empty($nim) && empty($className)) {
-                        continue; // baris kosong, skip
+                    // Cari kelas yang namanya cocok dengan nama sheet
+                    if ($selectedCourse !== '') {
+                        $stmt = $db->prepare("SELECT id FROM classes WHERE LOWER(name) = LOWER(?) AND course_name = ?");
+                        $stmt->execute([$className, $selectedCourse]);
+                    } else {
+                        $stmt = $db->prepare("SELECT id FROM classes WHERE LOWER(name) = LOWER(?)");
+                        $stmt->execute([$className]);
                     }
+                    $matches = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-                    $rowLabel = "Baris " . ($i + 1) . " ({$name})";
-
-                    if (empty($name) || empty($nim) || empty($className)) {
-                        $failed[] = "{$rowLabel}: Nama, NIM, atau Kelas kosong.";
+                    if (empty($matches)) {
+                        $failed[] = "Sheet '{$sheetName}': kelas '{$className}' belum ada di sistem. Buat kelasnya dulu, atau cek penulisan nama sheet.";
                         continue;
                     }
-
-                    $classKey = strtolower($className);
-                    if (!isset($classMap[$classKey])) {
-                        $failed[] = "{$rowLabel}: Kelas '{$className}' tidak ditemukan di sistem.";
+                    if (count($matches) > 1) {
+                        $failed[] = "Sheet '{$sheetName}': ada lebih dari 1 kelas bernama '{$className}' (mata kuliah beda). Pilih Mata Kuliah spesifik di form import supaya tidak ambigu.";
                         continue;
                     }
+                    $classId = $matches[0]['id'];
 
-                    // Kalau dosen (bukan admin) somehow akses ini... tapi ini admin-only page jadi aman.
-                    $classId = $classMap[$classKey];
+                    // Baris pertama = header, dilewati
+                    for ($i = 1; $i < count($rows); $i++) {
+                        $row = $rows[$i];
+                        // Kolom: 0 = No., 1 = NIM, 2 = Nama Mahasiswa
+                        $nim = trim($row[1] ?? '');
+                        $name = trim($row[2] ?? '');
 
-                    try {
-                        $stmt = $db->prepare("SELECT id FROM students WHERE nim = ?");
-                        $stmt->execute([$nim]);
-                        if ($stmt->fetch()) {
-                            $failed[] = "{$rowLabel}: NIM '{$nim}' sudah terdaftar.";
+                        if (empty($nim) && empty($name)) {
+                            continue;
+                        }
+                        if (empty($nim) || empty($name)) {
+                            $failed[] = "Sheet '{$sheetName}' baris " . ($i + 1) . ": NIM atau Nama kosong.";
                             continue;
                         }
 
-                        $stmt = $db->prepare("INSERT INTO students (name, nim, class_id) VALUES (?, ?, ?)");
-                        $stmt->execute([sanitizeInput($name), sanitizeInput($nim), $classId]);
-                        $success[] = "{$rowLabel}: berhasil ditambahkan ke kelas {$className}.";
-                    } catch (PDOException $e) {
-                        $failed[] = "{$rowLabel}: Gagal simpan ke database ({$e->getMessage()}).";
+                        $rowLabel = "Sheet '{$sheetName}' - {$name} ({$nim})";
+
+                        try {
+                            $stmt = $db->prepare("SELECT id FROM students WHERE nim = ?");
+                            $stmt->execute([$nim]);
+                            $existingStudent = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                            if ($existingStudent) {
+                                $studentId = $existingStudent['id'];
+                                $stmt = $db->prepare("SELECT id FROM class_students WHERE student_id = ? AND class_id = ?");
+                                $stmt->execute([$studentId, $classId]);
+                                if ($stmt->fetch()) {
+                                    $failed[] = "{$rowLabel}: sudah terdaftar di kelas {$className}.";
+                                    continue;
+                                }
+                                $stmt = $db->prepare("INSERT INTO class_students (student_id, class_id) VALUES (?, ?)");
+                                $stmt->execute([$studentId, $classId]);
+                                $success[] = "{$rowLabel}: mahasiswa sudah ada, ditambahkan ke kelas {$className} juga.";
+                            } else {
+                                $stmt = $db->prepare("INSERT INTO students (name, nim, class_id) VALUES (?, ?, ?) RETURNING id");
+                                $stmt->execute([sanitizeInput($name), sanitizeInput($nim), $classId]);
+                                $newId = $stmt->fetchColumn();
+
+                                $stmt = $db->prepare("INSERT INTO class_students (student_id, class_id) VALUES (?, ?)");
+                                $stmt->execute([$newId, $classId]);
+
+                                $success[] = "{$rowLabel}: berhasil ditambahkan ke kelas {$className}.";
+                            }
+                        } catch (PDOException $e) {
+                            $failed[] = "{$rowLabel}: Gagal simpan ke database ({$e->getMessage()}).";
+                        }
                     }
                 }
 
                 $results = ['success' => $success, 'failed' => $failed];
 
                 if (!empty($success)) {
-                    logUserActivity('Import mahasiswa dari Excel', ['jumlah_berhasil' => count($success)]);
+                    logUserActivity('Import mahasiswa dari Excel', ['jumlah_berhasil' => count($success), 'jumlah_sheet' => count($sheets)]);
                 }
 
             } catch (Exception $e) {
@@ -122,21 +151,25 @@ include '../includes/header.php';
                         </div>
                     <?php endif; ?>
 
-                    <div class="alert alert-info">
+                    <div class="alert alert-info alert-permanent">
                         <i class="fas fa-info-circle"></i> <strong>Format file Excel (.xlsx):</strong>
-                        <p class="mb-1 mt-2">Kolom A = Nama, Kolom B = NIM, Kolom C = Nama Kelas (harus persis sama dengan nama kelas yang sudah ada di sistem).</p>
-                        <p class="mb-0">Baris pertama dianggap header (judul kolom) dan akan dilewati otomatis.</p>
-                        <table class="table table-sm table-bordered mt-2 mb-0 bg-white">
-                            <thead><tr><th>Nama</th><th>NIM</th><th>Kelas</th></tr></thead>
-                            <tbody>
-                                <tr><td>Budi Santoso</td><td>101032400001</td><td>TK-48-05</td></tr>
-                                <tr><td>Siti Aminah</td><td>101032400002</td><td>TK-48-05</td></tr>
-                            </tbody>
-                        </table>
+                        <p class="mb-1 mt-2">Satu file bisa berisi <strong>beberapa sheet</strong> — nama tiap sheet harus <strong>persis sama</strong> dengan nama kelas yang sudah ada di sistem (contoh: <code>TK-48-05</code>).</p>
+                        <p class="mb-1">Tiap sheet punya 3 kolom: <strong>No.</strong> | <strong>NIM</strong> | <strong>Nama Mahasiswa</strong>. Baris pertama (header) dilewati otomatis.</p>
+                        <p class="mb-0">Kalau ada beberapa kelas dengan nama sama tapi mata kuliah beda, pilih <strong>Mata Kuliah</strong> di bawah supaya tidak ambigu.</p>
                     </div>
 
                     <form method="POST" action="" enctype="multipart/form-data" data-validate>
                         <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+
+                        <div class="form-group">
+                            <label for="course_name">Mata Kuliah <span class="text-muted">(opsional, isi kalau ada nama kelas yang sama untuk mata kuliah berbeda)</span></label>
+                            <select name="course_name" id="course_name" class="form-control">
+                                <option value="">-- Tidak dipilih (otomatis kalau nama kelas unik) --</option>
+                                <?php foreach ($courseNames as $course): ?>
+                                    <option value="<?php echo htmlspecialchars($course); ?>"><?php echo htmlspecialchars($course); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
 
                         <div class="form-group">
                             <label>File Excel (.xlsx)</label>

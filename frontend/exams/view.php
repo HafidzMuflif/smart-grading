@@ -41,7 +41,13 @@ try {
     $page_title = $exam['title'];
 
     // Mahasiswa di kelas ujian ini (untuk dropdown upload submission)
-    $stmt = $db->prepare("SELECT id, name, nim FROM students WHERE class_id = ? ORDER BY name");
+    $stmt = $db->prepare("
+        SELECT s.id, s.name, s.nim
+        FROM students s
+        JOIN class_students cs ON cs.student_id = s.id
+        WHERE cs.class_id = ?
+        ORDER BY s.name
+    ");
     $stmt->execute([$exam['class_id']]);
     $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -56,20 +62,6 @@ try {
     ");
     $stmt->execute([$id]);
     $submissions = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Cek ke backend: submission mana saja yang benar-benar sudah punya laporan AI
-    // (status 'completed' saja tidak cukup, karena mode gratis EasyOCR juga pakai status yang sama)
-    $aiAvailableIds = [];
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, API_BASE_URL . '/api/report/detailed/exam/' . $id . '/available');
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-    $aiCheckResponse = curl_exec($ch);
-    curl_close($ch);
-    if ($aiCheckResponse) {
-        $aiCheckData = json_decode($aiCheckResponse, true);
-        $aiAvailableIds = $aiCheckData['available_submission_ids'] ?? [];
-    }
 
 } catch (PDOException $e) {
     error_log("Error fetching exam detail: " . $e->getMessage());
@@ -185,7 +177,7 @@ include '../includes/header.php';
                             </p>
 
                             <?php if (empty($submissions)): ?>
-                                <div class="alert alert-warning py-2 mb-0">
+                                <div class="alert alert-warning alert-permanent py-2 mb-0">
                                     <i class="fas fa-exclamation-triangle"></i> Belum ada jawaban mahasiswa yang diupload.
                                 </div>
                             <?php else: ?>
@@ -309,7 +301,7 @@ include '../includes/header.php';
                                                                 title="Analisis dengan AI">
                                                             <i class="fas fa-robot"></i> Analisis AI
                                                         </button>
-                                                        <?php if (in_array($sub['id'], $aiAvailableIds)): ?>
+                                                        <?php if ($sub['status'] === 'completed'): ?>
                                                             <a href="<?php echo API_BASE_URL; ?>/api/report/detailed/<?php echo $sub['id']; ?>"
                                                                class="btn btn-sm btn-outline-success"
                                                                download
@@ -317,6 +309,13 @@ include '../includes/header.php';
                                                                 <i class="fas fa-file-alt"></i>
                                                             </a>
                                                         <?php endif; ?>
+                                                        <a href="delete_submission.php?submission_id=<?php echo $sub['id']; ?>&exam_id=<?php echo $id; ?>"
+                                                           class="btn btn-sm btn-outline-danger"
+                                                           title="Hapus Submission"
+                                                           data-confirm-delete
+                                                           data-confirm-message="Yakin ingin menghapus submission '<?php echo htmlspecialchars($sub['student_name']); ?>'? File jawaban dan hasil analisis AI (kalau ada) akan ikut terhapus.">
+                                                            <i class="fas fa-trash"></i>
+                                                        </a>
                                                     </td>
                                                 </tr>
                                             <?php endforeach; ?>

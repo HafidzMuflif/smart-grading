@@ -66,6 +66,15 @@ CREATE TABLE teacher_classes (
     UNIQUE(user_id, class_id)
 );
 
+-- Student-Class enrollment (many-to-many — 1 mahasiswa bisa ikut banyak kelas/mata kuliah)
+CREATE TABLE class_students (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(student_id, class_id)
+);
+
 -- Create indexes
 CREATE INDEX idx_students_nim ON students(nim);
 CREATE INDEX idx_students_class ON students(class_id);
@@ -74,3 +83,5 @@ CREATE INDEX idx_submissions_student ON submissions(student_id);
 CREATE INDEX idx_scores_submission ON scores(submission_id);
 CREATE INDEX idx_teacher_classes_user ON teacher_classes(user_id);
 CREATE INDEX idx_teacher_classes_class ON teacher_classes(class_id);
+CREATE INDEX idx_class_students_student ON class_students(student_id);
+CREATE INDEX idx_class_students_class ON class_students(class_id);

@@ -29,6 +29,10 @@ try {
     }
 
     $classes = $db->query("SELECT id, name, course_name FROM classes ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $db->prepare("SELECT class_id FROM class_students WHERE student_id = ?");
+    $stmt->execute([$id]);
+    $enrolledClassIds = array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'class_id');
 } catch (PDOException $e) {
     error_log("Error fetching student: " . $e->getMessage());
     $_SESSION['error'] = 'Gagal memuat data mahasiswa.';
@@ -38,7 +42,7 @@ try {
 
 $name = $student['name'];
 $nim = $student['nim'];
-$class_id = $student['class_id'];
+$selectedClassIds = $enrolledClassIds;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
@@ -46,10 +50,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $name = sanitizeInput($_POST['name'] ?? '');
         $nim = sanitizeInput($_POST['nim'] ?? '');
-        $class_id = intval($_POST['class_id'] ?? 0);
+        $selectedClassIds = array_map('intval', $_POST['class_ids'] ?? []);
 
-        if (empty($name) || empty($nim) || $class_id <= 0) {
-            $error = 'Nama, NIM, dan Kelas harus diisi.';
+        if (empty($name) || empty($nim) || empty($selectedClassIds)) {
+            $error = 'Nama, NIM, dan minimal 1 Kelas harus diisi.';
         } else {
             try {
                 // Cek NIM unik (kecuali milik mahasiswa ini sendiri)
@@ -58,8 +62,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($stmt->fetch()) {
                     $error = "NIM '{$nim}' sudah dipakai mahasiswa lain.";
                 } else {
+                    $db->beginTransaction();
+
+                    // class_id lama diisi kelas pertama saja, untuk kompatibilitas mundur
                     $stmt = $db->prepare("UPDATE students SET name = ?, nim = ?, class_id = ? WHERE id = ?");
-                    $stmt->execute([$name, $nim, $class_id, $id]);
+                    $stmt->execute([$name, $nim, $selectedClassIds[0], $id]);
+
+                    // Reset enrollment lama, insert ulang sesuai pilihan baru
+                    $stmt = $db->prepare("DELETE FROM class_students WHERE student_id = ?");
+                    $stmt->execute([$id]);
+
+                    $stmt = $db->prepare("INSERT INTO class_students (student_id, class_id) VALUES (?, ?)");
+                    foreach ($selectedClassIds as $classId) {
+                        $stmt->execute([$id, $classId]);
+                    }
+
+                    $db->commit();
 
                     logUserActivity('Mengubah data mahasiswa', ['id' => $id, 'name' => $name]);
 
@@ -68,6 +86,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     exit();
                 }
             } catch (PDOException $e) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
                 error_log("Error updating student: " . $e->getMessage());
                 $error = 'Gagal memperbarui data mahasiswa. Silahkan coba lagi.';
             }
@@ -124,15 +145,20 @@ include '../includes/header.php';
                         </div>
 
                         <div class="form-group">
-                            <label for="class_id">Kelas</label>
-                            <select name="class_id" id="class_id" class="form-control" required>
-                                <option value="">-- Pilih Kelas --</option>
+                            <label>Kelas / Mata Kuliah yang Diikuti</label>
+                            <div class="border rounded p-3" style="max-height: 250px; overflow-y: auto;">
                                 <?php foreach ($classes as $class): ?>
-                                    <option value="<?php echo $class['id']; ?>" <?php echo $class_id == $class['id'] ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($class['name']); ?> — <?php echo htmlspecialchars($class['course_name']); ?>
-                                    </option>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="class_ids[]"
+                                               value="<?php echo $class['id']; ?>" id="class_<?php echo $class['id']; ?>"
+                                               <?php echo in_array($class['id'], $selectedClassIds) ? 'checked' : ''; ?>>
+                                        <label class="form-check-label" for="class_<?php echo $class['id']; ?>">
+                                            <?php echo htmlspecialchars($class['name']); ?> — <?php echo htmlspecialchars($class['course_name']); ?>
+                                        </label>
+                                    </div>
                                 <?php endforeach; ?>
-                            </select>
+                            </div>
+                            <small class="form-text text-muted">Centang lebih dari satu kalau mahasiswa ini ikut beberapa mata kuliah/kelas sekaligus.</small>
                         </div>
 
                         <div class="form-group mb-0 mt-4">

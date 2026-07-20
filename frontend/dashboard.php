@@ -36,7 +36,12 @@ include 'includes/header.php';
             $classFilter = classAccessWhereClause('class_id');
 
             // Get statistics (terfilter sesuai kelas yang diampu, kecuali admin)
-            $studentCount = $db->query("SELECT COUNT(*) as count FROM students WHERE 1=1 {$classFilter}")->fetch(PDO::FETCH_ASSOC)['count'];
+            $studentClassFilter = isAdmin() ? '' : classAccessWhereClause('cs.class_id');
+            $studentCount = $db->query("
+                SELECT COUNT(DISTINCT cs.student_id) as count
+                FROM class_students cs
+                WHERE 1=1 {$studentClassFilter}
+            ")->fetch(PDO::FETCH_ASSOC)['count'];
             $classCountQuery = isAdmin()
                 ? "SELECT COUNT(*) as count FROM classes"
                 : "SELECT COUNT(*) as count FROM classes WHERE 1=1 " . classAccessWhereClause('id');
@@ -55,23 +60,35 @@ include 'includes/header.php';
 
             // Kelas & mahasiswa yang diampu (khusus dosen, admin tidak perlu ini di dashboard)
             $myClasses = [];
+            $myClassesGrouped = [];
             if (!isAdmin()) {
                 $stmt = $db->prepare("
                     SELECT c.id, c.name, c.course_name
                     FROM classes c
                     JOIN teacher_classes tc ON tc.class_id = c.id
                     WHERE tc.user_id = ?
-                    ORDER BY c.name
+                    ORDER BY c.course_name, c.name
                 ");
                 $stmt->execute([$_SESSION['user_id']]);
                 $myClasses = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
                 foreach ($myClasses as &$class) {
-                    $stmt = $db->prepare("SELECT name, nim FROM students WHERE class_id = ? ORDER BY name");
+                    $stmt = $db->prepare("
+                        SELECT s.name, s.nim
+                        FROM students s
+                        JOIN class_students cs ON cs.student_id = s.id
+                        WHERE cs.class_id = ?
+                        ORDER BY s.name
+                    ");
                     $stmt->execute([$class['id']]);
                     $class['students'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 }
                 unset($class);
+
+                // Kelompokkan per mata kuliah, supaya tidak ditampilkan berulang
+                foreach ($myClasses as $class) {
+                    $myClassesGrouped[$class['course_name']][] = $class;
+                }
             }
             ?>
             
@@ -241,43 +258,51 @@ include 'includes/header.php';
                                     <p class="text-muted">Anda belum di-assign ke kelas manapun. Hubungi admin untuk mengatur akses kelas Anda.</p>
                                 </div>
                             <?php else: ?>
-                                <div id="myClassesAccordion">
-                                    <?php foreach ($myClasses as $idx => $class): ?>
-                                        <div class="card mb-2">
-                                            <div class="card-header py-2" style="cursor: pointer;" data-toggle="collapse" data-target="#classCollapse<?php echo $class['id']; ?>">
-                                                <div class="d-flex justify-content-between align-items-center">
-                                                    <span>
-                                                        <i class="fas fa-chevron-down mr-2"></i>
-                                                        <strong><?php echo htmlspecialchars($class['name']); ?></strong>
-                                                        — <?php echo htmlspecialchars($class['course_name']); ?>
-                                                    </span>
-                                                    <span class="badge badge-primary"><?php echo count($class['students']); ?> mahasiswa</span>
-                                                </div>
-                                            </div>
-                                            <div id="classCollapse<?php echo $class['id']; ?>" class="collapse <?php echo $idx === 0 ? 'show' : ''; ?>" data-parent="#myClassesAccordion">
-                                                <div class="card-body py-2">
-                                                    <?php if (empty($class['students'])): ?>
-                                                        <p class="text-muted mb-0 small">Belum ada mahasiswa di kelas ini.</p>
-                                                    <?php else: ?>
-                                                        <table class="table table-sm mb-0">
-                                                            <thead>
-                                                                <tr><th>NIM</th><th>Nama</th></tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                <?php foreach ($class['students'] as $student): ?>
-                                                                    <tr>
-                                                                        <td><code><?php echo htmlspecialchars($student['nim']); ?></code></td>
-                                                                        <td><?php echo htmlspecialchars($student['name']); ?></td>
-                                                                    </tr>
-                                                                <?php endforeach; ?>
-                                                            </tbody>
-                                                        </table>
-                                                    <?php endif; ?>
-                                                </div>
+                                <?php foreach ($myClassesGrouped as $courseName => $classesInCourse): ?>
+                                    <div class="card mb-3">
+                                        <div class="card-header bg-primary text-white py-2">
+                                            <h6 class="mb-0"><i class="fas fa-book"></i> <?php echo htmlspecialchars($courseName); ?></h6>
+                                        </div>
+                                        <div class="card-body py-2">
+                                            <div id="myClassesAccordion<?php echo md5($courseName); ?>">
+                                                <?php foreach ($classesInCourse as $class): ?>
+                                                    <div class="card mb-2">
+                                                        <div class="card-header py-2" style="cursor: pointer;" data-toggle="collapse" data-target="#classCollapse<?php echo $class['id']; ?>">
+                                                            <div class="d-flex justify-content-between align-items-center">
+                                                                <span>
+                                                                    <i class="fas fa-chevron-down mr-2"></i>
+                                                                    <strong><?php echo htmlspecialchars($class['name']); ?></strong>
+                                                                </span>
+                                                                <span class="badge badge-primary"><?php echo count($class['students']); ?> mahasiswa</span>
+                                                            </div>
+                                                        </div>
+                                                        <div id="classCollapse<?php echo $class['id']; ?>" class="collapse" data-parent="#myClassesAccordion<?php echo md5($courseName); ?>">
+                                                            <div class="card-body py-2">
+                                                                <?php if (empty($class['students'])): ?>
+                                                                    <p class="text-muted mb-0 small">Belum ada mahasiswa di kelas ini.</p>
+                                                                <?php else: ?>
+                                                                    <table class="table table-sm mb-0">
+                                                                        <thead>
+                                                                            <tr><th>NIM</th><th>Nama</th></tr>
+                                                                        </thead>
+                                                                        <tbody>
+                                                                            <?php foreach ($class['students'] as $student): ?>
+                                                                                <tr>
+                                                                                    <td><code><?php echo htmlspecialchars($student['nim']); ?></code></td>
+                                                                                    <td><?php echo htmlspecialchars($student['name']); ?></td>
+                                                                                </tr>
+                                                                            <?php endforeach; ?>
+                                                                        </tbody>
+                                                                    </table>
+                                                                <?php endif; ?>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                <?php endforeach; ?>
                                             </div>
                                         </div>
-                                    <?php endforeach; ?>
-                                </div>
+                                    </div>
+                                <?php endforeach; ?>
                             <?php endif; ?>
                         </div>
                     </div>

@@ -9,7 +9,10 @@ requireAdmin();
 $page_title = 'Tambah Mahasiswa';
 $name = '';
 $nim = '';
-$class_id = intval($_GET['class_id'] ?? 0);
+$selectedClassIds = [];
+if (!empty($_GET['class_id'])) {
+    $selectedClassIds = [intval($_GET['class_id'])];
+}
 
 try {
     $db = Database::getInstance()->getConnection();
@@ -31,28 +34,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $name = sanitizeInput($_POST['name'] ?? '');
         $nim = sanitizeInput($_POST['nim'] ?? '');
-        $class_id = intval($_POST['class_id'] ?? 0);
+        $selectedClassIds = array_map('intval', $_POST['class_ids'] ?? []);
 
-        if (empty($name) || empty($nim) || $class_id <= 0) {
-            $error = 'Nama, NIM, dan Kelas harus diisi.';
+        if (empty($name) || empty($nim) || empty($selectedClassIds)) {
+            $error = 'Nama, NIM, dan minimal 1 Kelas harus diisi.';
         } else {
             try {
                 // Cek NIM unik
                 $stmt = $db->prepare("SELECT id FROM students WHERE nim = ?");
                 $stmt->execute([$nim]);
                 if ($stmt->fetch()) {
-                    $error = "NIM '{$nim}' sudah terdaftar. Gunakan NIM lain.";
+                    $error = "NIM '{$nim}' sudah terdaftar. Gunakan NIM lain, atau kalau mahasiswa ini sudah ada, tambahkan kelas lewat halaman Edit.";
                 } else {
-                    $stmt = $db->prepare("INSERT INTO students (name, nim, class_id) VALUES (?, ?, ?)");
-                    $stmt->execute([$name, $nim, $class_id]);
+                    $db->beginTransaction();
+
+                    // class_id lama dibiarkan terisi kelas pertama saja untuk kompatibilitas mundur
+                    $stmt = $db->prepare("INSERT INTO students (name, nim, class_id) VALUES (?, ?, ?) RETURNING id");
+                    $stmt->execute([$name, $nim, $selectedClassIds[0]]);
+                    $newStudentId = $stmt->fetchColumn();
+
+                    $stmt = $db->prepare("INSERT INTO class_students (student_id, class_id) VALUES (?, ?)");
+                    foreach ($selectedClassIds as $classId) {
+                        $stmt->execute([$newStudentId, $classId]);
+                    }
+
+                    $db->commit();
 
                     logUserActivity('Menambah mahasiswa baru', ['name' => $name, 'nim' => $nim]);
 
-                    $_SESSION['success'] = "Mahasiswa '{$name}' berhasil ditambahkan.";
+                    $_SESSION['success'] = "Mahasiswa '{$name}' berhasil ditambahkan ke " . count($selectedClassIds) . " kelas.";
                     redirect('index.php');
                     exit();
                 }
             } catch (PDOException $e) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
                 error_log("Error creating student: " . $e->getMessage());
                 $error = 'Gagal menyimpan data mahasiswa. Silahkan coba lagi.';
             }
@@ -110,15 +127,20 @@ include '../includes/header.php';
                         </div>
 
                         <div class="form-group">
-                            <label for="class_id">Kelas</label>
-                            <select name="class_id" id="class_id" class="form-control" required>
-                                <option value="">-- Pilih Kelas --</option>
+                            <label>Kelas / Mata Kuliah yang Diikuti</label>
+                            <div class="border rounded p-3" style="max-height: 250px; overflow-y: auto;">
                                 <?php foreach ($classes as $class): ?>
-                                    <option value="<?php echo $class['id']; ?>" <?php echo $class_id == $class['id'] ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($class['name']); ?> — <?php echo htmlspecialchars($class['course_name']); ?>
-                                    </option>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="class_ids[]"
+                                               value="<?php echo $class['id']; ?>" id="class_<?php echo $class['id']; ?>"
+                                               <?php echo in_array($class['id'], $selectedClassIds) ? 'checked' : ''; ?>>
+                                        <label class="form-check-label" for="class_<?php echo $class['id']; ?>">
+                                            <?php echo htmlspecialchars($class['name']); ?> — <?php echo htmlspecialchars($class['course_name']); ?>
+                                        </label>
+                                    </div>
                                 <?php endforeach; ?>
-                            </select>
+                            </div>
+                            <small class="form-text text-muted">Centang lebih dari satu kalau mahasiswa ini ikut beberapa mata kuliah/kelas sekaligus.</small>
                         </div>
 
                         <div class="form-group mb-0 mt-4">

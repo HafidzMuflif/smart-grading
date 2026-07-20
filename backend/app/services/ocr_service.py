@@ -6,6 +6,8 @@ import os
 from typing import List, Dict
 import logging
 
+from app.config import Config
+
 # --- Compatibility patch ---
 # easyocr==1.7.0 masih memanggil PIL.Image.ANTIALIAS, yang sudah dihapus
 # di Pillow>=10.0 (diganti Image.Resampling.LANCZOS). Tambal di sini
@@ -26,7 +28,7 @@ class OCRService:
         """Extract text from PDF using EasyOCR"""
         try:
             # Convert PDF to images
-            images = convert_from_path(pdf_path)
+            images = convert_from_path(pdf_path, poppler_path=Config.POPPLER_PATH)
             extracted_text = []
             
             for i, image in enumerate(images):

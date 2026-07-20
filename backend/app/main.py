@@ -576,7 +576,12 @@ async def bulk_detect_and_assign(
 
         # Ambil roster mahasiswa di kelas ujian ini
         students = db.execute(
-            text("SELECT id, name, nim FROM students WHERE class_id = :class_id"),
+            text("""
+                SELECT s.id, s.name, s.nim
+                FROM students s
+                JOIN class_students cs ON cs.student_id = s.id
+                WHERE cs.class_id = :class_id
+            """),
             {"class_id": exam_row.class_id}
         ).fetchall()
 

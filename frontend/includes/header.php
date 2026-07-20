@@ -74,7 +74,7 @@ if (isLoggedIn() && !isValidSession(3600)) {
                             <span class="badge badge-light ml-1"><?php echo getUserRoleDisplay(); ?></span>
                         </a>
                         <div class="dropdown-menu dropdown-menu-right">
-                            <a class="dropdown-item" href="#">
+                            <a class="dropdown-item" href="<?php echo BASE_URL; ?>/profile.php">
                                 <i class="fas fa-user-cog"></i> Profile
                             </a>
                             <div class="dropdown-divider"></div>
