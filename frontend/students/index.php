@@ -19,11 +19,11 @@ try {
 
     foreach ($classes as &$class) {
         $stmt = $db->prepare("
-            SELECT s.id, s.name, s.nim
+            SELECT s.id, s.name, s.nim, cs.absen
             FROM students s
             JOIN class_students cs ON cs.student_id = s.id
             WHERE cs.class_id = ?
-            ORDER BY s.name
+            ORDER BY cs.absen NULLS LAST, s.name
         ");
         $stmt->execute([$class['id']]);
         $class['students'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -106,11 +106,12 @@ include '../includes/header.php';
                                                 <?php else: ?>
                                                     <table class="table table-sm table-hover mb-0">
                                                         <thead>
-                                                            <tr><th>NIM</th><th>Nama</th><th class="text-right">Aksi</th></tr>
+                                                            <tr><th>Absen</th><th>NIM</th><th>Nama</th><th class="text-right">Aksi</th></tr>
                                                         </thead>
                                                         <tbody>
                                                             <?php foreach ($class['students'] as $student): ?>
                                                                 <tr>
+                                                                    <td><?php echo $student['absen'] !== null ? htmlspecialchars($student['absen']) : '<span class="text-muted">-</span>'; ?></td>
                                                                     <td><code><?php echo htmlspecialchars($student['nim']); ?></code></td>
                                                                     <td><?php echo htmlspecialchars($student['name']); ?></td>
                                                                     <td class="text-right">

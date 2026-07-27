@@ -70,9 +70,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Baris pertama = header, dilewati
                     for ($i = 1; $i < count($rows); $i++) {
                         $row = $rows[$i];
-                        // Kolom: 0 = No., 1 = NIM, 2 = Nama Mahasiswa
+                        // Kolom: 0 = No. (absen), 1 = NIM, 2 = Nama Mahasiswa
+                        $absenRaw = trim($row[0] ?? '');
                         $nim = trim($row[1] ?? '');
                         $name = trim($row[2] ?? '');
+                        $absen = ctype_digit($absenRaw) ? intval($absenRaw) : null;
 
                         if (empty($nim) && empty($name)) {
                             continue;
@@ -82,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             continue;
                         }
 
-                        $rowLabel = "Sheet '{$sheetName}' - {$name} ({$nim})";
+                        $rowLabel = "Sheet '{$sheetName}' - {$name} ({$nim})" . ($absen !== null ? ", absen {$absen}" : '');
 
                         try {
                             $stmt = $db->prepare("SELECT id FROM students WHERE nim = ?");
@@ -97,16 +99,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     $failed[] = "{$rowLabel}: sudah terdaftar di kelas {$className}.";
                                     continue;
                                 }
-                                $stmt = $db->prepare("INSERT INTO class_students (student_id, class_id) VALUES (?, ?)");
-                                $stmt->execute([$studentId, $classId]);
+                                $stmt = $db->prepare("INSERT INTO class_students (student_id, class_id, absen) VALUES (?, ?, ?)");
+                                $stmt->execute([$studentId, $classId, $absen]);
                                 $success[] = "{$rowLabel}: mahasiswa sudah ada, ditambahkan ke kelas {$className} juga.";
                             } else {
                                 $stmt = $db->prepare("INSERT INTO students (name, nim, class_id) VALUES (?, ?, ?) RETURNING id");
                                 $stmt->execute([sanitizeInput($name), sanitizeInput($nim), $classId]);
                                 $newId = $stmt->fetchColumn();
 
-                                $stmt = $db->prepare("INSERT INTO class_students (student_id, class_id) VALUES (?, ?)");
-                                $stmt->execute([$newId, $classId]);
+                                $stmt = $db->prepare("INSERT INTO class_students (student_id, class_id, absen) VALUES (?, ?, ?)");
+                                $stmt->execute([$newId, $classId, $absen]);
 
                                 $success[] = "{$rowLabel}: berhasil ditambahkan ke kelas {$className}.";
                             }
@@ -155,6 +157,7 @@ include '../includes/header.php';
                         <i class="fas fa-info-circle"></i> <strong>Format file Excel (.xlsx):</strong>
                         <p class="mb-1 mt-2">Satu file bisa berisi <strong>beberapa sheet</strong> — nama tiap sheet harus <strong>persis sama</strong> dengan nama kelas yang sudah ada di sistem (contoh: <code>TK-48-05</code>).</p>
                         <p class="mb-1">Tiap sheet punya 3 kolom: <strong>No.</strong> | <strong>NIM</strong> | <strong>Nama Mahasiswa</strong>. Baris pertama (header) dilewati otomatis.</p>
+                        <p class="mb-1">Kolom <strong>No.</strong> disimpan sebagai <strong>nomor absen</strong> mahasiswa di kelas tersebut — dipakai nanti untuk mencocokkan file jawaban saat upload massal (format nama file: <code>absen_nama.pdf</code>).</p>
                         <p class="mb-0">Kalau ada beberapa kelas dengan nama sama tapi mata kuliah beda, pilih <strong>Mata Kuliah</strong> di bawah supaya tidak ambigu.</p>
                     </div>
 

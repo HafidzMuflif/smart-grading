@@ -57,9 +57,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $stmt = $db->prepare("
                     INSERT INTO exams (title, class_id, answer_key_path, rubric_path)
-                    VALUES (?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?) RETURNING id
                 ");
                 $stmt->execute([$title, $class_id, $answerKeyPath, $rubricPath]);
+                $newExamId = $stmt->fetchColumn();
+
+                // Minta backend siapkan folder penyimpanan jawaban untuk ujian ini
+                $ch = curl_init();
+                curl_setopt($ch, CURLOPT_URL, API_BASE_URL . '/api/exam/' . $newExamId . '/init-folder');
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+                curl_exec($ch);
+                if (curl_error($ch)) {
+                    error_log('Gagal membuat folder ujian di backend: ' . curl_error($ch));
+                }
+                curl_close($ch);
 
                 logUserActivity('Membuat ujian baru', ['title' => $title]);
 

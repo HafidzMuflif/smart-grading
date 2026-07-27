@@ -61,16 +61,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['bulk_files'])) {
                 continue;
             }
 
-            // Forward ke backend untuk dideteksi & dicocokkan
+            // Forward ke backend untuk disimpan & dicocokkan lewat nama file (TANPA AI)
             $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, API_BASE_URL . '/api/upload/bulk-detect');
+            curl_setopt($ch, CURLOPT_URL, API_BASE_URL . '/api/upload/bulk-store');
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, [
                 'exam_id' => (string) $id,
                 'file' => new CURLFile($files['tmp_name'][$i], 'application/pdf', $files['name'][$i]),
             ]);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curlError = curl_error($ch);
@@ -96,7 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['bulk_files'])) {
         }
 
         if (!empty($results['matched'])) {
-            logUserActivity('Upload massal jawaban', ['exam_id' => $id, 'jumlah_matched' => count($results['matched'])]);
+            logUserActivity('Upload massal jawaban (tanpa AI)', ['exam_id' => $id, 'jumlah_matched' => count($results['matched'])]);
         }
     }
 }
@@ -126,9 +126,15 @@ include '../includes/header.php';
                     <?php endif; ?>
 
                     <div class="alert alert-info alert-permanent">
-                        <i class="fas fa-robot"></i> Pilih banyak file PDF sekaligus (jawaban seluruh/sebagian mahasiswa di kelas ini).
-                        AI akan membaca nama & NIM di tiap file, lalu otomatis mencocokkan ke mahasiswa terdaftar.
-                        <strong>Setiap file memanggil AI satu kali</strong> — perhatikan jumlah file untuk efisiensi kuota API.
+                        <i class="fas fa-folder"></i> Pilih banyak file PDF sekaligus. File <strong>hanya disimpan</strong> di tahap ini —
+                        <strong>tidak ada pemanggilan AI sama sekali</strong>, jadi tidak memakan kuota API.
+                        Setelah semua jawaban terkumpul (boleh dilakukan bertahap kapan saja), klik
+                        <strong>"Analisis Keseluruhan"</strong> di halaman detail ujian untuk menilai semuanya sekaligus.
+                    </div>
+
+                    <div class="alert alert-warning alert-permanent">
+                        <i class="fas fa-file-signature"></i> <strong>Format nama file wajib:</strong> cukup <strong>nomor absen saja</strong>, contoh <code>12.pdf</code>.
+                        Angka absen harus sesuai dengan nomor absen mahasiswa di kelas ini (dari data hasil import Excel).
                     </div>
 
                     <form method="POST" action="" enctype="multipart/form-data" id="bulkUploadForm">
@@ -144,7 +150,7 @@ include '../includes/header.php';
                         <div id="selectedFilesList" class="mb-3"></div>
 
                         <button type="submit" class="btn btn-primary" id="bulkSubmitBtn">
-                            <i class="fas fa-upload"></i> Proses & Deteksi Otomatis
+                            <i class="fas fa-upload"></i> Simpan Jawaban
                         </button>
                     </form>
                 </div>
@@ -153,7 +159,7 @@ include '../includes/header.php';
             <?php if ($results !== null): ?>
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="mb-0"><i class="fas fa-list-check"></i> Hasil Deteksi</h5>
+                        <h5 class="mb-0"><i class="fas fa-list-check"></i> Hasil Penyimpanan</h5>
                     </div>
                     <div class="card-body">
                         <p>
@@ -167,12 +173,12 @@ include '../includes/header.php';
                         <?php if (!empty($results['matched'])): ?>
                             <h6 class="text-success mt-3"><i class="fas fa-check-circle"></i> Berhasil Dicocokkan</h6>
                             <table class="table table-sm">
-                                <thead><tr><th>File</th><th>Terdeteksi</th><th>Dicocokkan ke</th></tr></thead>
+                                <thead><tr><th>File</th><th>Absen Terbaca</th><th>Dicocokkan ke</th></tr></thead>
                                 <tbody>
                                     <?php foreach ($results['matched'] as $m): ?>
                                         <tr>
                                             <td><?php echo htmlspecialchars($m['filename']); ?></td>
-                                            <td><?php echo htmlspecialchars($m['detected_name'] ?: '-'); ?> (<?php echo htmlspecialchars($m['detected_nim'] ?: '-'); ?>)</td>
+                                            <td><?php echo htmlspecialchars($m['detected_absen'] ?? '-'); ?></td>
                                             <td><strong><?php echo htmlspecialchars($m['student_name']); ?></strong> — <?php echo htmlspecialchars($m['student_nim']); ?></td>
                                         </tr>
                                     <?php endforeach; ?>
@@ -182,14 +188,14 @@ include '../includes/header.php';
 
                         <?php if (!empty($results['unmatched'])): ?>
                             <h6 class="text-warning mt-3"><i class="fas fa-exclamation-triangle"></i> Tidak Ditemukan Kecocokan</h6>
-                            <p class="text-muted small">File ini perlu diupload manual lewat form "Upload Jawaban Mahasiswa" di halaman detail ujian.</p>
+                            <p class="text-muted small">File ini perlu diupload manual lewat form "Upload Jawaban Mahasiswa" di halaman detail ujian, atau cek kembali nomor absen di nama file.</p>
                             <table class="table table-sm">
-                                <thead><tr><th>File</th><th>Terdeteksi AI</th></tr></thead>
+                                <thead><tr><th>File</th><th>Keterangan</th></tr></thead>
                                 <tbody>
                                     <?php foreach ($results['unmatched'] as $u): ?>
                                         <tr>
                                             <td><?php echo htmlspecialchars($u['filename']); ?></td>
-                                            <td><?php echo htmlspecialchars($u['detected_name'] ?: '(nama tidak terbaca)'); ?> (<?php echo htmlspecialchars($u['detected_nim'] ?: '-'); ?>)</td>
+                                            <td><?php echo htmlspecialchars($u['message'] ?? '-'); ?></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
@@ -233,7 +239,7 @@ document.getElementById('bulkFileInput').addEventListener('change', function() {
 document.getElementById('bulkUploadForm').addEventListener('submit', function() {
     const btn = document.getElementById('bulkSubmitBtn');
     btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memproses (mohon tunggu, ini bisa memakan waktu)...';
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menyimpan file...';
 });
 </script>
 

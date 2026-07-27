@@ -32,6 +32,7 @@ CREATE TABLE exams (
     class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
     answer_key_path VARCHAR(255),
     rubric_path VARCHAR(255),
+    upload_folder VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -71,6 +72,7 @@ CREATE TABLE class_students (
     id SERIAL PRIMARY KEY,
     student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
     class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    absen INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(student_id, class_id)
 );

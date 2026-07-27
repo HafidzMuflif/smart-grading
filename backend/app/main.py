@@ -70,29 +70,71 @@ def read_root():
 async def upload_answer_sheet(
     exam_id: str = Form(...),
     student_id: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
 ):
-    """Upload student answer sheet. Called by the frontend right after a
-    submission is saved, so the backend has its own copy to OCR later."""
+    """Upload jawaban SATU mahasiswa (dipanggil PHP setelah upload manual lewat
+    form 'Upload Jawaban Mahasiswa'). Disimpan ke folder ujian yang sama dengan
+    upload massal, dan path resminya disinkronkan ke kolom submissions.answer_sheet_path
+    supaya bisa langsung dipakai proses 'Analisis Keseluruhan'."""
     try:
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-        upload_dir = os.path.join(Config.UPLOAD_DIR, exam_id, student_id)
-        os.makedirs(upload_dir, exist_ok=True)
+        exam_row = db.execute(
+            text("SELECT id, title, class_id, upload_folder FROM exams WHERE id = :exam_id"),
+            {"exam_id": int(exam_id)}
+        ).fetchone()
+        if not exam_row:
+            raise HTTPException(status_code=404, detail="Ujian tidak ditemukan.")
 
-        file_path = os.path.join(upload_dir, file.filename)
+        student_row = db.execute(
+            text("""
+                SELECT s.name, cs.absen
+                FROM students s
+                LEFT JOIN class_students cs ON cs.student_id = s.id AND cs.class_id = :class_id
+                WHERE s.id = :student_id
+            """),
+            {"class_id": exam_row.class_id, "student_id": int(student_id)}
+        ).fetchone()
+
+        exam_folder = _get_exam_upload_folder(int(exam_id), exam_row.title, exam_row.upload_folder)
+        if not exam_row.upload_folder:
+            db.execute(
+                text("UPDATE exams SET upload_folder = :folder WHERE id = :exam_id"),
+                {"folder": os.path.basename(exam_folder), "exam_id": int(exam_id)}
+            )
+
+        absen_prefix = student_row.absen if (student_row and student_row.absen is not None) else "X"
+        student_name = student_row.name if student_row else "mahasiswa"
+        safe_name = _slugify_title(student_name)
+        saved_filename = f"{absen_prefix}_{safe_name}.pdf"
+        file_path = os.path.join(exam_folder, saved_filename)
+
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
+        existing = db.execute(
+            text("SELECT id FROM submissions WHERE exam_id = :exam_id AND student_id = :student_id"),
+            {"exam_id": int(exam_id), "student_id": int(student_id)}
+        ).fetchone()
+
+        if existing:
+            db.execute(
+                text("UPDATE submissions SET answer_sheet_path = :path WHERE id = :id"),
+                {"path": file_path, "id": existing.id}
+            )
+            db.commit()
+
         return {
             "status": "success",
-            "filename": file.filename,
+            "filename": saved_filename,
             "path": file_path
         }
     except HTTPException:
         raise
     except Exception as e:
+        db.rollback()
         logger.error(f"Error uploading answer sheet: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -125,12 +167,68 @@ def _parse_rubric_file(rubric_path: str) -> dict:
     return rubric
 
 
+def _slugify_title(title: str) -> str:
+    """Ubah judul ujian jadi nama folder yang aman & mudah dibaca manusia."""
+    slug = re.sub(r'[^\w\s-]', '', title, flags=re.UNICODE).strip()
+    slug = re.sub(r'[\s]+', '_', slug)
+    return slug[:80] if slug else "ujian"
+
+
+def _get_exam_upload_folder(exam_id: int, title: str, upload_folder_db_value: Optional[str]) -> str:
+    """Kembalikan path folder upload untuk suatu ujian. Kalau sudah pernah
+    dibuat (tersimpan di kolom exams.upload_folder), pakai itu supaya stabil
+    walau judul ujian diedit belakangan. Kalau belum ada, buat baru.
+    SELALU absolut, supaya path yang disimpan ke submissions.answer_sheet_path
+    juga absolut (Config.UPLOAD_DIR bisa jadi cuma './uploads' yang relatif)."""
+    if upload_folder_db_value:
+        folder_path = os.path.join(Config.UPLOAD_DIR, "exams", upload_folder_db_value)
+    else:
+        folder_name = f"{exam_id}_{_slugify_title(title)}"
+        folder_path = os.path.join(Config.UPLOAD_DIR, "exams", folder_name)
+    folder_path = os.path.abspath(folder_path)
+    os.makedirs(folder_path, exist_ok=True)
+    return folder_path
+
+
+def _debug_list_folder(folder_path: str, limit: int = 15) -> str:
+    """Bantuan diagnostik: kalau sebuah file tidak ketemu, tunjukkan isi
+    folder tempat harusnya file itu berada, supaya gampang ketahuan
+    penyebabnya (folder tidak ada, nama beda, dsb)."""
+    try:
+        if not os.path.isdir(folder_path):
+            return f"[Folder '{folder_path}' tidak ada sama sekali di server.]"
+        entries = os.listdir(folder_path)
+        if not entries:
+            return f"[Folder '{folder_path}' ada tapi kosong.]"
+        shown = entries[:limit]
+        more = f" (+{len(entries) - limit} lainnya)" if len(entries) > limit else ""
+        return f"Isi folder '{folder_path}': {', '.join(shown)}{more}"
+    except Exception as e:
+        return f"[Gagal membaca folder '{folder_path}': {e}]"
+
+
 def _find_submission_file(exam_id: str, student_id: str) -> Optional[str]:
-    """Locate the backend-side copy of a student's answer sheet, uploaded
-    earlier via /api/upload/answersheet."""
+    """[LEGACY] Cari file jawaban dengan pola folder lama (exam_id/student_id/*.pdf),
+    dipakai sebagai fallback untuk submission yang dibuat sebelum skema folder baru."""
     pattern = os.path.join(Config.UPLOAD_DIR, str(exam_id), str(student_id), "*.pdf")
     matches = glob.glob(pattern)
     return matches[0] if matches else None
+
+
+def _resolve_answer_sheet_path(exam_id: int, student_id: int, answer_sheet_path: Optional[str]) -> Optional[str]:
+    """Cari file fisik jawaban mahasiswa. Coba berurutan:
+    1. Path absolut yang sudah tersimpan di kolom submissions.answer_sheet_path (skema baru, normal).
+    2. Path yang sama tapi ternyata tersimpan RELATIF (bug lama) — coba resolve
+       relatif terhadap working directory proses backend saat ini.
+    3. Fallback ke pola folder lama (exam_id/student_id/*.pdf) untuk data yang
+       dibuat sebelum skema folder-per-ujian ada."""
+    if answer_sheet_path:
+        if os.path.isabs(answer_sheet_path) and os.path.exists(answer_sheet_path):
+            return answer_sheet_path
+        candidate = os.path.abspath(answer_sheet_path)
+        if os.path.exists(candidate):
+            return candidate
+    return _find_submission_file(str(exam_id), str(student_id))
 
 
 @app.post("/api/process/exam")
@@ -342,6 +440,108 @@ async def generate_report(exam_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _grade_submission_core(submission_id: int, db: Session, ai_service) -> dict:
+    """Logika inti penilaian AI untuk satu submission. Melempar Exception biasa
+    (bukan HTTPException) supaya bisa dipakai baik oleh endpoint single maupun
+    endpoint batch ('Analisis Keseluruhan') tanpa saling mengganggu."""
+    submission_row = db.execute(
+        text("""
+            SELECT sub.id, sub.exam_id, sub.student_id, sub.answer_sheet_path,
+                   e.title as exam_title, e.rubric_path, e.answer_key_path,
+                   s.name as student_name, s.nim as student_nim,
+                   c.name as class_name
+            FROM submissions sub
+            JOIN exams e ON sub.exam_id = e.id
+            JOIN students s ON sub.student_id = s.id
+            LEFT JOIN classes c ON e.class_id = c.id
+            WHERE sub.id = :submission_id
+        """),
+        {"submission_id": submission_id}
+    ).fetchone()
+
+    if not submission_row:
+        raise Exception("Submission not found")
+
+    if not submission_row.rubric_path:
+        raise Exception("Ujian ini belum punya file rubrik (Markdown). Upload rubrik dulu lewat halaman Edit Ujian.")
+
+    if not submission_row.answer_key_path:
+        raise Exception("Ujian ini belum punya file kunci jawaban (Markdown). Upload dulu lewat halaman Edit Ujian.")
+
+    frontend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
+    rubric_full_path = os.path.join(frontend_root, submission_row.rubric_path)
+    answer_key_full_path = os.path.join(frontend_root, submission_row.answer_key_path)
+
+    if not os.path.exists(rubric_full_path):
+        raise Exception(
+            f"File rubrik tidak ditemukan di server: {submission_row.rubric_path} "
+            f"(dicari di path lengkap: {rubric_full_path}). {_debug_list_folder(os.path.dirname(rubric_full_path))}"
+        )
+    if not os.path.exists(answer_key_full_path):
+        raise Exception(
+            f"File kunci jawaban tidak ditemukan di server: {submission_row.answer_key_path} "
+            f"(dicari di path lengkap: {answer_key_full_path}). {_debug_list_folder(os.path.dirname(answer_key_full_path))}"
+        )
+
+    answer_sheet_path = _resolve_answer_sheet_path(
+        submission_row.exam_id, submission_row.student_id, submission_row.answer_sheet_path
+    )
+    if not answer_sheet_path:
+        raise Exception("File jawaban mahasiswa tidak ditemukan di backend. Upload ulang lewat halaman detail ujian.")
+
+    with open(rubric_full_path, 'r', encoding='utf-8', errors='ignore') as f:
+        rubric_text = f.read()
+    with open(answer_key_full_path, 'r', encoding='utf-8', errors='ignore') as f:
+        answer_key_text = f.read()
+
+    if not rubric_text.strip():
+        raise Exception("File rubrik kosong.")
+    if not answer_key_text.strip():
+        raise Exception("File kunci jawaban kosong.")
+
+    grading_result = ai_service.grade_exam(
+        answer_sheet_pdf_path=answer_sheet_path,
+        rubric_text=rubric_text,
+        answer_key_text=answer_key_text,
+        student_name=submission_row.student_name,
+        student_nim=submission_row.student_nim
+    )
+
+    nilai_total = float(grading_result.get("nilai_total", 0))
+    kesimpulan_singkat = grading_result.get("kesimpulan", "")[:500]
+
+    db.execute(
+        text("DELETE FROM scores WHERE submission_id = :submission_id"),
+        {"submission_id": submission_id}
+    )
+    db.execute(
+        text("""
+            INSERT INTO scores (submission_id, question_number, score, max_score, feedback)
+            VALUES (:submission_id, 1, :score, 100, :feedback)
+        """),
+        {"submission_id": submission_id, "score": nilai_total, "feedback": kesimpulan_singkat}
+    )
+    db.execute(
+        text("UPDATE submissions SET status = 'completed', processed_at = :now WHERE id = :submission_id"),
+        {"now": datetime.utcnow(), "submission_id": submission_id}
+    )
+    db.commit()
+
+    analysis_dir = os.path.join(Config.REPORT_DIR, "analysis")
+    os.makedirs(analysis_dir, exist_ok=True)
+    analysis_path = os.path.join(analysis_dir, f"submission_{submission_id}.json")
+    with open(analysis_path, "w", encoding="utf-8") as f:
+        json.dump(grading_result, f, ensure_ascii=False, indent=2)
+
+    return {
+        "submission_id": submission_id,
+        "student_name": submission_row.student_name,
+        "nilai_total": nilai_total,
+        "huruf": grading_result.get("huruf"),
+        "sections_count": len(grading_result.get("sections", []))
+    }
+
+
 @app.post("/api/grade/submission/{submission_id}/ai")
 async def grade_submission_with_ai(submission_id: int, db: Session = Depends(get_db)):
     """Nilai satu submission mahasiswa memakai AI (Gemini vision) berdasarkan
@@ -349,115 +549,55 @@ async def grade_submission_with_ai(submission_id: int, db: Session = Depends(get
     laporan Markdown detail."""
     try:
         ai_service = get_ai_grading_service()
-
-        submission_row = db.execute(
-            text("""
-                SELECT sub.id, sub.exam_id, sub.student_id,
-                       e.title as exam_title, e.rubric_path, e.answer_key_path,
-                       s.name as student_name, s.nim as student_nim,
-                       c.name as class_name
-                FROM submissions sub
-                JOIN exams e ON sub.exam_id = e.id
-                JOIN students s ON sub.student_id = s.id
-                LEFT JOIN classes c ON e.class_id = c.id
-                WHERE sub.id = :submission_id
-            """),
-            {"submission_id": submission_id}
-        ).fetchone()
-
-        if not submission_row:
-            raise HTTPException(status_code=404, detail="Submission not found")
-
-        if not submission_row.rubric_path:
-            raise HTTPException(
-                status_code=400,
-                detail="Ujian ini belum punya file rubrik (Markdown). Upload rubrik dulu lewat halaman Edit Ujian."
-            )
-
-        if not submission_row.answer_key_path:
-            raise HTTPException(
-                status_code=400,
-                detail="Ujian ini belum punya file kunci jawaban (Markdown). Upload dulu lewat halaman Edit Ujian."
-            )
-
-        # Rubrik & kunci jawaban disimpan oleh PHP sebagai path relatif terhadap
-        # folder frontend/ (mis. "uploads/exams/xxx_rubrik.md"). Cari file
-        # fisiknya dari sisi backend.
-        frontend_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend"))
-        rubric_full_path = os.path.join(frontend_root, submission_row.rubric_path)
-        answer_key_full_path = os.path.join(frontend_root, submission_row.answer_key_path)
-
-        if not os.path.exists(rubric_full_path):
-            raise HTTPException(status_code=400, detail=f"File rubrik tidak ditemukan di server: {submission_row.rubric_path}")
-        if not os.path.exists(answer_key_full_path):
-            raise HTTPException(status_code=400, detail=f"File kunci jawaban tidak ditemukan di server: {submission_row.answer_key_path}")
-
-        answer_sheet_path = _find_submission_file(str(submission_row.exam_id), str(submission_row.student_id))
-        if not answer_sheet_path:
-            raise HTTPException(
-                status_code=400,
-                detail="File jawaban mahasiswa tidak ditemukan di backend. Upload ulang lewat halaman detail ujian."
-            )
-
-        with open(rubric_full_path, 'r', encoding='utf-8', errors='ignore') as f:
-            rubric_text = f.read()
-        with open(answer_key_full_path, 'r', encoding='utf-8', errors='ignore') as f:
-            answer_key_text = f.read()
-
-        if not rubric_text.strip():
-            raise HTTPException(status_code=400, detail="File rubrik kosong.")
-        if not answer_key_text.strip():
-            raise HTTPException(status_code=400, detail="File kunci jawaban kosong.")
-
-        grading_result = ai_service.grade_exam(
-            answer_sheet_pdf_path=answer_sheet_path,
-            rubric_text=rubric_text,
-            answer_key_text=answer_key_text,
-            student_name=submission_row.student_name,
-            student_nim=submission_row.student_nim
-        )
-
-        nilai_total = float(grading_result.get("nilai_total", 0))
-        kesimpulan_singkat = grading_result.get("kesimpulan", "")[:500]
-
-        db.execute(
-            text("DELETE FROM scores WHERE submission_id = :submission_id"),
-            {"submission_id": submission_id}
-        )
-        db.execute(
-            text("""
-                INSERT INTO scores (submission_id, question_number, score, max_score, feedback)
-                VALUES (:submission_id, 1, :score, 100, :feedback)
-            """),
-            {"submission_id": submission_id, "score": nilai_total, "feedback": kesimpulan_singkat}
-        )
-        db.execute(
-            text("UPDATE submissions SET status = 'completed', processed_at = :now WHERE id = :submission_id"),
-            {"now": datetime.utcnow(), "submission_id": submission_id}
-        )
-        db.commit()
-
-        # Simpan hasil analisis lengkap ke disk supaya laporan PDF bisa dibuat ulang tanpa panggil AI lagi
-        analysis_dir = os.path.join(Config.REPORT_DIR, "analysis")
-        os.makedirs(analysis_dir, exist_ok=True)
-        analysis_path = os.path.join(analysis_dir, f"submission_{submission_id}.json")
-        with open(analysis_path, "w", encoding="utf-8") as f:
-            json.dump(grading_result, f, ensure_ascii=False, indent=2)
-
-        return {
-            "status": "success",
-            "submission_id": submission_id,
-            "nilai_total": nilai_total,
-            "huruf": grading_result.get("huruf"),
-            "sections_count": len(grading_result.get("sections", []))
-        }
-
-    except HTTPException:
-        raise
+        result = _grade_submission_core(submission_id, db, ai_service)
+        return {"status": "success", **result}
     except Exception as e:
         db.rollback()
         logger.error(f"Error in AI grading for submission {submission_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/grade/exam/{exam_id}/all")
+async def grade_all_pending_submissions(exam_id: int, db: Session = Depends(get_db)):
+    """'Analisis Keseluruhan' — proses semua submission berstatus pending/failed
+    pada satu ujian secara berurutan. Kegagalan satu submission tidak
+    menghentikan proses submission lain."""
+    try:
+        ai_service = get_ai_grading_service()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    pending = db.execute(
+        text("SELECT id FROM submissions WHERE exam_id = :exam_id AND status IN ('pending', 'failed')"),
+        {"exam_id": exam_id}
+    ).fetchall()
+
+    processed = []
+    failed = []
+
+    for row in pending:
+        try:
+            result = _grade_submission_core(row.id, db, ai_service)
+            processed.append(result)
+        except Exception as e:
+            db.rollback()
+            db.execute(
+                text("UPDATE submissions SET status = 'failed' WHERE id = :id"),
+                {"id": row.id}
+            )
+            db.commit()
+            logger.error(f"Gagal menilai submission {row.id} (batch): {e}")
+            failed.append({"submission_id": row.id, "error": str(e)})
+
+    return {
+        "status": "completed",
+        "exam_id": exam_id,
+        "total": len(pending),
+        "processed": len(processed),
+        "failed": len(failed),
+        "results": processed,
+        "errors": failed
+    }
 
 
 @app.get("/api/report/detailed/exam/{exam_id}/available")
@@ -540,101 +680,128 @@ def _normalize_text(s: str) -> str:
     return s
 
 
-@app.post("/api/upload/bulk-detect")
-async def bulk_detect_and_assign(
-    exam_id: int = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-    """Upload SATU file jawaban (dipanggil berulang oleh frontend untuk tiap
-    file dalam upload massal). AI membaca nama/NIM di halaman pertama,
-    mencocokkan ke roster mahasiswa kelas ujian ini, lalu otomatis membuat
-    submission kalau match ditemukan."""
+@app.post("/api/exam/{exam_id}/init-folder")
+async def init_exam_folder(exam_id: int, db: Session = Depends(get_db)):
+    """Buat folder penyimpanan jawaban untuk suatu ujian (dipanggil sekali,
+    tepat setelah ujian dibuat di sisi frontend). Nama folder berbasis judul
+    ujian supaya mudah ditelusuri manual, dan disimpan permanen di kolom
+    exams.upload_folder supaya tidak berubah walau judul ujian diedit."""
     try:
-        ai_service = get_ai_grading_service()
-
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="Hanya file PDF yang didukung.")
-
         exam_row = db.execute(
-            text("SELECT id, class_id FROM exams WHERE id = :exam_id"),
+            text("SELECT id, title, upload_folder FROM exams WHERE id = :exam_id"),
             {"exam_id": exam_id}
         ).fetchone()
         if not exam_row:
             raise HTTPException(status_code=404, detail="Ujian tidak ditemukan.")
 
-        # Simpan file sementara untuk dibaca AI
-        tmp_dir = os.path.join(Config.UPLOAD_DIR, "tmp_bulk")
-        os.makedirs(tmp_dir, exist_ok=True)
-        tmp_path = os.path.join(tmp_dir, f"{uuid.uuid4().hex}_{file.filename}")
-        with open(tmp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        if exam_row.upload_folder:
+            # Sudah pernah dibuat sebelumnya, tidak perlu buat ulang
+            _get_exam_upload_folder(exam_id, exam_row.title, exam_row.upload_folder)
+            return {"status": "success", "folder": exam_row.upload_folder, "already_existed": True}
 
-        identity = ai_service.detect_student_identity(tmp_path)
-        detected_name = identity.get("name", "")
-        detected_nim = identity.get("nim", "")
+        folder_name = f"{exam_id}_{_slugify_title(exam_row.title)}"
+        _get_exam_upload_folder(exam_id, exam_row.title, folder_name)
 
-        # Ambil roster mahasiswa di kelas ujian ini
-        students = db.execute(
+        db.execute(
+            text("UPDATE exams SET upload_folder = :folder WHERE id = :exam_id"),
+            {"folder": folder_name, "exam_id": exam_id}
+        )
+        db.commit()
+
+        return {"status": "success", "folder": folder_name, "already_existed": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating exam folder for exam {exam_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _parse_absen_from_filename(filename: str) -> Optional[int]:
+    """Ambil nomor absen dari nama file jawaban mahasiswa. Format yang
+    dianjurkan cukup angka absen saja (mis. '12.pdf'), tapi juga tetap
+    menerima format dengan tambahan nama di belakangnya (mis.
+    '12_Budi_Santoso.pdf' atau '12-Budi Santoso.pdf') — yang penting angka
+    absen ada di paling depan nama file."""
+    base = os.path.splitext(filename)[0]
+    match = re.match(r'^\s*(\d+)', base)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+@app.post("/api/upload/bulk-store")
+async def bulk_store_by_filename(
+    exam_id: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload SATU file jawaban (dipanggil berulang oleh frontend untuk tiap
+    file dalam upload massal). TIDAK memanggil AI sama sekali di tahap ini —
+    hanya membaca nomor absen dari NAMA FILE (cukup angka absen saja, mis.
+    '12.pdf'), mencocokkan ke roster mahasiswa (kolom class_students.absen),
+    lalu menyimpan filenya. Penilaian AI baru dilakukan belakangan lewat
+    endpoint 'Analisis Keseluruhan' (/api/grade/exam/{exam_id}/all)."""
+    try:
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Hanya file PDF yang didukung.")
+
+        exam_row = db.execute(
+            text("SELECT id, title, class_id, upload_folder FROM exams WHERE id = :exam_id"),
+            {"exam_id": exam_id}
+        ).fetchone()
+        if not exam_row:
+            raise HTTPException(status_code=404, detail="Ujian tidak ditemukan.")
+
+        absen = _parse_absen_from_filename(file.filename)
+        if absen is None:
+            return {
+                "filename": file.filename,
+                "matched": False,
+                "detected_absen": None,
+                "message": "Nama file tidak diawali angka absen. Ganti nama file jadi nomor absen saja, mis. '12.pdf'."
+            }
+
+        student = db.execute(
             text("""
                 SELECT s.id, s.name, s.nim
                 FROM students s
                 JOIN class_students cs ON cs.student_id = s.id
-                WHERE cs.class_id = :class_id
+                WHERE cs.class_id = :class_id AND cs.absen = :absen
             """),
-            {"class_id": exam_row.class_id}
-        ).fetchall()
+            {"class_id": exam_row.class_id, "absen": absen}
+        ).fetchone()
 
-        matched_student = None
-
-        # 1. Coba cocokkan via NIM dulu (paling reliable)
-        if detected_nim:
-            for s in students:
-                if re.sub(r'\D', '', s.nim) == detected_nim:
-                    matched_student = s
-                    break
-
-        # 2. Kalau belum ketemu, coba cocokkan via nama (exact match setelah dinormalisasi)
-        if not matched_student and detected_name:
-            norm_detected = _normalize_text(detected_name)
-            candidates = [s for s in students if _normalize_text(s.name) == norm_detected]
-            if len(candidates) == 1:
-                matched_student = candidates[0]
-            elif len(candidates) == 0:
-                # 3. Fallback: partial containment match (misal AI cuma baca nama depan)
-                partial_candidates = [
-                    s for s in students
-                    if norm_detected and (norm_detected in _normalize_text(s.name) or _normalize_text(s.name) in norm_detected)
-                ]
-                if len(partial_candidates) == 1:
-                    matched_student = partial_candidates[0]
-
-        if not matched_student:
-            os.remove(tmp_path)
+        if not student:
             return {
                 "filename": file.filename,
                 "matched": False,
-                "detected_name": detected_name,
-                "detected_nim": detected_nim,
-                "message": "Tidak ditemukan mahasiswa yang cocok di kelas ini. Upload manual lewat form 'Upload Jawaban Mahasiswa'."
+                "detected_absen": absen,
+                "message": f"Tidak ada mahasiswa dengan absen {absen} di kelas ini. Cek nomor absen atau upload manual lewat form 'Upload Jawaban Mahasiswa'."
             }
 
-        # Pindahkan file ke folder resmi backend/uploads/{exam_id}/{student_id}/
-        final_dir = os.path.join(Config.UPLOAD_DIR, str(exam_id), str(matched_student.id))
-        os.makedirs(final_dir, exist_ok=True)
-        final_path = os.path.join(final_dir, file.filename)
-        shutil.move(tmp_path, final_path)
+        # Simpan file langsung ke folder ujian (dibuat saat ujian dibuat; buat sekarang kalau belum ada)
+        exam_folder = _get_exam_upload_folder(exam_id, exam_row.title, exam_row.upload_folder)
+        if not exam_row.upload_folder:
+            new_folder_name = os.path.basename(exam_folder)
+            db.execute(
+                text("UPDATE exams SET upload_folder = :folder WHERE id = :exam_id"),
+                {"folder": new_folder_name, "exam_id": exam_id}
+            )
 
-        # Buat / update submission
+        final_path = os.path.join(exam_folder, file.filename)
+        with open(final_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
         existing = db.execute(
             text("SELECT id FROM submissions WHERE exam_id = :exam_id AND student_id = :student_id"),
-            {"exam_id": exam_id, "student_id": matched_student.id}
+            {"exam_id": exam_id, "student_id": student.id}
         ).fetchone()
 
         if existing:
             db.execute(
-                text("UPDATE submissions SET answer_sheet_path = :path, status = 'pending' WHERE id = :id"),
-                {"path": f"bulk-upload/{file.filename}", "id": existing.id}
+                text("UPDATE submissions SET answer_sheet_path = :path, status = 'pending', processed_at = NULL WHERE id = :id"),
+                {"path": final_path, "id": existing.id}
             )
         else:
             db.execute(
@@ -642,25 +809,24 @@ async def bulk_detect_and_assign(
                     INSERT INTO submissions (exam_id, student_id, answer_sheet_path, status)
                     VALUES (:exam_id, :student_id, :path, 'pending')
                 """),
-                {"exam_id": exam_id, "student_id": matched_student.id, "path": f"bulk-upload/{file.filename}"}
+                {"exam_id": exam_id, "student_id": student.id, "path": final_path}
             )
         db.commit()
 
         return {
             "filename": file.filename,
             "matched": True,
-            "detected_name": detected_name,
-            "detected_nim": detected_nim,
-            "student_id": matched_student.id,
-            "student_name": matched_student.name,
-            "student_nim": matched_student.nim
+            "detected_absen": absen,
+            "student_id": student.id,
+            "student_name": student.name,
+            "student_nim": student.nim
         }
 
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error in bulk detect/assign: {e}")
+        logger.error(f"Error in bulk store: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

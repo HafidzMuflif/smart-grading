@@ -62,6 +62,7 @@ try {
     ");
     $stmt->execute([$id]);
     $submissions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $pendingCount = count(array_filter($submissions, function($s) { return in_array($s['status'], ['pending', 'failed']); }));
 
 } catch (PDOException $e) {
     error_log("Error fetching exam detail: " . $e->getMessage());
@@ -181,9 +182,15 @@ include '../includes/header.php';
                                     <i class="fas fa-exclamation-triangle"></i> Belum ada jawaban mahasiswa yang diupload.
                                 </div>
                             <?php else: ?>
-                                <small class="text-muted d-block">
-                                    Gunakan tombol <strong>"Analisis AI"</strong> di tabel submission untuk menilai jawaban tiap mahasiswa berdasarkan rubrik & kunci jawaban.
-                                </small>
+                                <?php if ($pendingCount > 0): ?>
+                                    <small class="text-muted d-block">
+                                        <i class="fas fa-info-circle"></i> Ada <?php echo $pendingCount; ?> jawaban menunggu dinilai — klik tombol <strong>"Analisis Keseluruhan"</strong> di panel kanan.
+                                    </small>
+                                <?php else: ?>
+                                    <small class="text-muted d-block">
+                                        Semua submission sudah dinilai. Gunakan tombol <strong>"Analisis AI"</strong> per baris untuk menilai ulang salah satu mahasiswa.
+                                    </small>
+                                <?php endif; ?>
                             <?php endif; ?>
                         </div>
                     </div>
@@ -242,6 +249,11 @@ include '../includes/header.php';
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
                             <h5 class="mb-0"><i class="fas fa-list"></i> Submission Mahasiswa (<?php echo count($submissions); ?>)</h5>
                             <div>
+                                <?php if (!empty($submissions) && $pendingCount > 0): ?>
+                                    <button type="button" class="btn btn-sm btn-success" id="btnAnalisisKeseluruhan" data-exam-id="<?php echo $id; ?>">
+                                        <i class="fas fa-magic"></i> Analisis Keseluruhan (<?php echo $pendingCount; ?> menunggu)
+                                    </button>
+                                <?php endif; ?>
                                 <a href="<?php echo API_BASE_URL; ?>/api/report/exam/<?php echo $id; ?>/zip" class="btn btn-sm btn-outline-success" title="Download semua laporan Markdown (ZIP)">
                                     <i class="fas fa-file-archive"></i> Semua Laporan (ZIP)
                                 </a>
@@ -366,6 +378,52 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     });
+
+    const btnAll = document.getElementById('btnAnalisisKeseluruhan');
+    if (btnAll) {
+        btnAll.addEventListener('click', function() {
+            const examId = this.getAttribute('data-exam-id');
+            const originalHtml = this.innerHTML;
+
+            if (!confirm('Proses semua jawaban yang menunggu sekaligus? Ini bisa memakan waktu beberapa menit tergantung jumlah mahasiswa, dan akan memanggil AI untuk tiap mahasiswa.')) {
+                return;
+            }
+
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memproses semua jawaban (mohon tunggu)...';
+
+            fetch('<?php echo API_BASE_URL; ?>/api/grade/exam/' + examId + '/all', {
+                method: 'POST'
+            })
+            .then(function(response) {
+                return response.json().then(function(data) {
+                    return { ok: response.ok, data: data };
+                });
+            })
+            .then(function(result) {
+                if (result.ok) {
+                    let msg = 'Selesai! Berhasil dinilai: ' + result.data.processed + ', Gagal: ' + result.data.failed + ' dari total ' + result.data.total + '.';
+                    if (result.data.errors && result.data.errors.length > 0) {
+                        msg += '\n\nDetail kegagalan:\n';
+                        result.data.errors.forEach(function(e) {
+                            msg += '- Submission #' + e.submission_id + ': ' + e.error + '\n';
+                        });
+                    }
+                    alert(msg);
+                    location.reload();
+                } else {
+                    alert('Gagal: ' + (result.data.detail || 'Terjadi kesalahan.'));
+                    btnAll.disabled = false;
+                    btnAll.innerHTML = originalHtml;
+                }
+            })
+            .catch(function(err) {
+                alert('Tidak bisa terhubung ke backend. Pastikan server FastAPI sedang berjalan.');
+                btnAll.disabled = false;
+                btnAll.innerHTML = originalHtml;
+            });
+        });
+    }
 });
 </script>
 
