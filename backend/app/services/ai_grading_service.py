@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 from typing import Dict, List
 
@@ -27,15 +28,32 @@ class AIGradingService:
         genai.configure(api_key=Config.GEMINI_API_KEY)
         self.model = genai.GenerativeModel(Config.GEMINI_MODEL)
 
-    def _pdf_to_images(self, pdf_path: str, dpi: int = 150) -> List[bytes]:
-        """Konversi tiap halaman PDF jadi gambar PNG (raw bytes) untuk dikirim ke Gemini vision."""
-        images = convert_from_path(pdf_path, dpi=dpi, poppler_path=Config.POPPLER_PATH)
-        encoded = []
-        for img in images:
-            buffer = BytesIO()
-            img.save(buffer, format="PNG")
-            encoded.append(buffer.getvalue())
-        return encoded
+    def _file_to_images(self, file_path: str, dpi: int = 150) -> List[Dict]:
+        """Ubah file jawaban jadi daftar gambar siap kirim ke Gemini vision.
+        Kalau PDF: tiap halaman dikonversi jadi gambar PNG. Kalau JPG/JPEG/PNG:
+        dipakai langsung apa adanya tanpa konversi (lebih cepat, sudah berupa
+        gambar). Mengembalikan list of {"mime_type": ..., "data": bytes}."""
+        ext = os.path.splitext(file_path)[1].lower()
+
+        if ext == '.pdf':
+            images = convert_from_path(file_path, dpi=dpi, poppler_path=Config.POPPLER_PATH)
+            result = []
+            for img in images:
+                buffer = BytesIO()
+                img.save(buffer, format="PNG")
+                result.append({"mime_type": "image/png", "data": buffer.getvalue()})
+            return result
+
+        elif ext in ('.jpg', '.jpeg'):
+            with open(file_path, 'rb') as f:
+                return [{"mime_type": "image/jpeg", "data": f.read()}]
+
+        elif ext == '.png':
+            with open(file_path, 'rb') as f:
+                return [{"mime_type": "image/png", "data": f.read()}]
+
+        else:
+            raise Exception(f"Format file tidak didukung: '{ext}'. Gunakan PDF, JPG, JPEG, atau PNG.")
 
     def _build_prompt(self, student_name: str, student_nim: str, rubric_text: str, answer_key_text: str) -> str:
         return f"""Anda adalah asisten dosen yang bertugas menilai lembar jawaban ujian mahasiswa berdasarkan rubrik penilaian dan kunci jawaban yang diberikan.
@@ -96,12 +114,12 @@ Balas HANYA dengan JSON valid (tanpa markdown code fence, tanpa teks pembuka/pen
 Pastikan angka nilai_akhir tiap bagian dan nilai_total dihitung secara matematis benar sesuai formula di rubrik, bukan estimasi."""
 
     def detect_student_identity(self, pdf_path: str) -> Dict:
-        """Baca halaman pertama lembar jawaban, deteksi nama & NIM mahasiswa
-        yang tertulis di situ. Dipakai untuk fitur upload massal (folder)."""
+        """Baca halaman/gambar pertama lembar jawaban, deteksi nama & NIM
+        mahasiswa yang tertulis di situ. Dipakai untuk fitur upload massal."""
         try:
-            images = self._pdf_to_images(pdf_path, dpi=120)
+            images = self._file_to_images(pdf_path, dpi=120)
             if not images:
-                raise Exception("Tidak bisa membaca file PDF.")
+                raise Exception("Tidak bisa membaca file jawaban.")
 
             prompt = """Lihat gambar lembar jawaban ujian ini. Cari nama mahasiswa dan NIM yang tertulis
 (biasanya di bagian atas/header lembar jawaban).
@@ -109,7 +127,7 @@ Pastikan angka nilai_akhir tiap bagian dan nilai_total dihitung secara matematis
 Balas HANYA dengan JSON valid (tanpa markdown code fence), format PERSIS:
 {"name": "nama yang terbaca, atau string kosong jika tidak ketemu", "nim": "NIM yang terbaca (hanya angka), atau string kosong jika tidak ketemu"}"""
 
-            content = [prompt, {"mime_type": "image/png", "data": images[0]}]
+            content = [prompt, images[0]]
 
             response = self.model.generate_content(
                 content,
@@ -129,15 +147,15 @@ Balas HANYA dengan JSON valid (tanpa markdown code fence), format PERSIS:
         """Nilai satu lembar jawaban mahasiswa terhadap rubrik. Mengembalikan
         dict sesuai skema yang diminta di prompt (sections, nilai_total, dst)."""
         try:
-            images = self._pdf_to_images(answer_sheet_pdf_path)
+            images = self._file_to_images(answer_sheet_pdf_path)
             if not images:
-                raise Exception("Tidak bisa mengkonversi PDF lembar jawaban menjadi gambar.")
+                raise Exception("Tidak bisa membaca file lembar jawaban.")
 
             prompt = self._build_prompt(student_name, student_nim, rubric_text, answer_key_text)
 
             content = [prompt]
-            for img_bytes in images:
-                content.append({"mime_type": "image/png", "data": img_bytes})
+            for img in images:
+                content.append(img)
 
             response = self.model.generate_content(
                 content,

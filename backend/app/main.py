@@ -78,8 +78,10 @@ async def upload_answer_sheet(
     upload massal, dan path resminya disinkronkan ke kolom submissions.answer_sheet_path
     supaya bisa langsung dipakai proses 'Analisis Keseluruhan'."""
     try:
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+        allowed_ext = ('.pdf', '.jpg', '.jpeg', '.png')
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_ext:
+            raise HTTPException(status_code=400, detail="Hanya file PDF, JPG, JPEG, atau PNG yang didukung.")
 
         exam_row = db.execute(
             text("SELECT id, title, class_id, upload_folder FROM exams WHERE id = :exam_id"),
@@ -108,7 +110,7 @@ async def upload_answer_sheet(
         absen_prefix = student_row.absen if (student_row and student_row.absen is not None) else "X"
         student_name = student_row.name if student_row else "mahasiswa"
         safe_name = _slugify_title(student_name)
-        saved_filename = f"{absen_prefix}_{safe_name}.pdf"
+        saved_filename = f"{absen_prefix}_{safe_name}{file_ext}"
         file_path = os.path.join(exam_folder, saved_filename)
 
         with open(file_path, "wb") as buffer:
@@ -743,8 +745,10 @@ async def bulk_store_by_filename(
     lalu menyimpan filenya. Penilaian AI baru dilakukan belakangan lewat
     endpoint 'Analisis Keseluruhan' (/api/grade/exam/{exam_id}/all)."""
     try:
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="Hanya file PDF yang didukung.")
+        allowed_ext = ('.pdf', '.jpg', '.jpeg', '.png')
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_ext:
+            raise HTTPException(status_code=400, detail="Hanya file PDF, JPG, JPEG, atau PNG yang didukung.")
 
         exam_row = db.execute(
             text("SELECT id, title, class_id, upload_folder FROM exams WHERE id = :exam_id"),

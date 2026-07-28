@@ -79,13 +79,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $student_id = intval($_POST['student_id'] ?? 0);
 
         if ($student_id <= 0 || empty($_FILES['answer_sheet']['name'])) {
-            $_SESSION['error'] = 'Pilih mahasiswa dan upload file jawaban (PDF).';
+            $_SESSION['error'] = 'Pilih mahasiswa dan upload file jawaban (PDF/JPG/PNG).';
         } else {
             try {
                 $uploadDir = __DIR__ . '/../uploads/submissions/' . $id;
-                $absolutePath = uploadFile($_FILES['answer_sheet'], $uploadDir, ['pdf']);
+                $absolutePath = uploadFile($_FILES['answer_sheet'], $uploadDir, ['pdf', 'jpg', 'jpeg', 'png']);
                 $frontendRoot = realpath(__DIR__ . '/..');
                 $relativePath = ltrim(str_replace($frontendRoot, '', realpath($absolutePath)), '/\\');
+
+                $fileExt = strtolower(pathinfo($absolutePath, PATHINFO_EXTENSION));
+                $mimeMap = ['pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png'];
+                $mimeType = $mimeMap[$fileExt] ?? 'application/octet-stream';
 
                 // Kirim salinan file ke backend FastAPI supaya bisa di-OCR & dinilai nanti
                 $ch = curl_init();
@@ -94,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 curl_setopt($ch, CURLOPT_POSTFIELDS, [
                     'exam_id' => (string) $id,
                     'student_id' => (string) $student_id,
-                    'file' => new CURLFile(realpath($absolutePath), 'application/pdf', basename($absolutePath)),
+                    'file' => new CURLFile(realpath($absolutePath), $mimeType, basename($absolutePath)),
                 ]);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($ch, CURLOPT_TIMEOUT, 30);
@@ -225,10 +229,10 @@ include '../includes/header.php';
 
                                     <div class="form-group mb-0">
                                         <div class="upload-zone">
-                                            <input type="file" name="answer_sheet" accept=".pdf" required style="display:none;">
+                                            <input type="file" name="answer_sheet" accept=".pdf,.jpg,.jpeg,.png" required style="display:none;">
                                             <div class="upload-zone-content">
                                                 <i class="fas fa-cloud-upload-alt fa-2x text-primary mb-2"></i>
-                                                <p class="mb-0">Klik atau drag file jawaban (PDF)</p>
+                                                <p class="mb-0">Klik atau drag file jawaban (PDF/JPG/PNG)</p>
                                             </div>
                                             <div class="file-preview mt-2"></div>
                                         </div>

@@ -56,10 +56,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['bulk_files'])) {
             }
 
             $ext = strtolower(pathinfo($files['name'][$i], PATHINFO_EXTENSION));
-            if ($ext !== 'pdf') {
-                $results['errors'][] = $files['name'][$i] . ': bukan file PDF, dilewati.';
+            $allowedExt = ['pdf', 'jpg', 'jpeg', 'png'];
+            if (!in_array($ext, $allowedExt)) {
+                $results['errors'][] = $files['name'][$i] . ': format tidak didukung (harus PDF, JPG, JPEG, atau PNG), dilewati.';
                 continue;
             }
+
+            $mimeMap = ['pdf' => 'application/pdf', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png'];
+            $mimeType = $mimeMap[$ext] ?? 'application/octet-stream';
 
             // Forward ke backend untuk disimpan & dicocokkan lewat nama file (TANPA AI)
             $ch = curl_init();
@@ -67,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['bulk_files'])) {
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, [
                 'exam_id' => (string) $id,
-                'file' => new CURLFile($files['tmp_name'][$i], 'application/pdf', $files['name'][$i]),
+                'file' => new CURLFile($files['tmp_name'][$i], $mimeType, $files['name'][$i]),
             ]);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, 30);
@@ -126,7 +130,7 @@ include '../includes/header.php';
                     <?php endif; ?>
 
                     <div class="alert alert-info alert-permanent">
-                        <i class="fas fa-folder"></i> Pilih banyak file PDF sekaligus. File <strong>hanya disimpan</strong> di tahap ini —
+                        <i class="fas fa-folder"></i> Pilih banyak file jawaban sekaligus (PDF, JPG, atau PNG). File <strong>hanya disimpan</strong> di tahap ini —
                         <strong>tidak ada pemanggilan AI sama sekali</strong>, jadi tidak memakan kuota API.
                         Setelah semua jawaban terkumpul (boleh dilakukan bertahap kapan saja), klik
                         <strong>"Analisis Keseluruhan"</strong> di halaman detail ujian untuk menilai semuanya sekaligus.
@@ -142,8 +146,8 @@ include '../includes/header.php';
                         <input type="hidden" name="exam_id" value="<?php echo $id; ?>">
 
                         <div class="form-group">
-                            <label>Pilih File PDF (bisa banyak sekaligus)</label>
-                            <input type="file" name="bulk_files[]" id="bulkFileInput" accept=".pdf" multiple class="form-control-file" required>
+                            <label>Pilih File Jawaban (PDF/JPG/PNG, bisa banyak sekaligus)</label>
+                            <input type="file" name="bulk_files[]" id="bulkFileInput" accept=".pdf,.jpg,.jpeg,.png" multiple class="form-control-file" required>
                             <small class="form-text text-muted">Tips: buka folder berisi jawaban, lalu pilih semua file PDF sekaligus (Ctrl/Cmd + A).</small>
                         </div>
 
