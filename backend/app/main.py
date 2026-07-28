@@ -2,6 +2,7 @@ import os
 import glob
 import json
 import re
+import time
 import uuid
 import shutil
 import logging
@@ -549,10 +550,12 @@ async def grade_submission_with_ai(submission_id: int, db: Session = Depends(get
     """Nilai satu submission mahasiswa memakai AI (Gemini vision) berdasarkan
     rubrik + kunci jawaban ujian (format Markdown), lalu simpan skor & buat
     laporan Markdown detail."""
+    start_time = time.time()
     try:
         ai_service = get_ai_grading_service()
         result = _grade_submission_core(submission_id, db, ai_service)
-        return {"status": "success", **result}
+        elapsed_seconds = round(time.time() - start_time, 1)
+        return {"status": "success", "elapsed_seconds": elapsed_seconds, **result}
     except Exception as e:
         db.rollback()
         logger.error(f"Error in AI grading for submission {submission_id}: {e}")
@@ -564,6 +567,7 @@ async def grade_all_pending_submissions(exam_id: int, db: Session = Depends(get_
     """'Analisis Keseluruhan' — proses semua submission berstatus pending/failed
     pada satu ujian secara berurutan. Kegagalan satu submission tidak
     menghentikan proses submission lain."""
+    start_time = time.time()
     try:
         ai_service = get_ai_grading_service()
     except Exception as e:
@@ -591,12 +595,15 @@ async def grade_all_pending_submissions(exam_id: int, db: Session = Depends(get_
             logger.error(f"Gagal menilai submission {row.id} (batch): {e}")
             failed.append({"submission_id": row.id, "error": str(e)})
 
+    elapsed_seconds = round(time.time() - start_time, 1)
+
     return {
         "status": "completed",
         "exam_id": exam_id,
         "total": len(pending),
         "processed": len(processed),
         "failed": len(failed),
+        "elapsed_seconds": elapsed_seconds,
         "results": processed,
         "errors": failed
     }

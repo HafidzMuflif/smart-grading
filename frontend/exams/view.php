@@ -348,6 +348,19 @@ include '../includes/header.php';
 </div>
 
 <script>
+function formatDurasi(seconds) {
+    seconds = Math.round(seconds);
+    if (seconds < 60) {
+        return seconds + ' detik';
+    }
+    const menit = Math.floor(seconds / 60);
+    const sisaDetik = seconds % 60;
+    if (sisaDetik === 0) {
+        return menit + ' menit';
+    }
+    return menit + ' menit ' + sisaDetik + ' detik';
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.btn-ai-grade').forEach(function(btn) {
         btn.addEventListener('click', function() {
@@ -367,7 +380,7 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .then(function(result) {
                 if (result.ok) {
-                    alert('Analisis selesai! Nilai: ' + result.data.nilai_total + ' (' + result.data.huruf + ')');
+                    alert('Analisis selesai! Nilai: ' + result.data.nilai_total + ' (' + result.data.huruf + ')\n\nWaktu analisis: ' + formatDurasi(result.data.elapsed_seconds));
                     location.reload();
                 } else {
                     alert('Gagal: ' + (result.data.detail || 'Terjadi kesalahan.'));
@@ -407,6 +420,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(function(result) {
                 if (result.ok) {
                     let msg = 'Selesai! Berhasil dinilai: ' + result.data.processed + ', Gagal: ' + result.data.failed + ' dari total ' + result.data.total + '.';
+                    msg += '\nWaktu analisis: ' + formatDurasi(result.data.elapsed_seconds);
                     if (result.data.errors && result.data.errors.length > 0) {
                         msg += '\n\nDetail kegagalan:\n';
                         result.data.errors.forEach(function(e) {
