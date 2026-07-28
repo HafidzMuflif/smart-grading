@@ -203,8 +203,8 @@ include '../includes/header.php';
                     <div class="card">
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <h5 class="mb-0"><i class="fas fa-upload"></i> Upload Jawaban Mahasiswa</h5>
-                            <a href="bulk_upload.php?id=<?php echo $id; ?>" class="btn btn-sm btn-outline-primary" title="Upload banyak file sekaligus, AI deteksi nama otomatis">
-                                <i class="fas fa-robot"></i> Upload Massal
+                            <a href="bulk_upload.php?id=<?php echo $id; ?>" class="btn btn-sm btn-outline-success" title="Upload banyak file sekaligus">
+                                <i class="fas fa-upload"></i> Upload Massal
                             </a>
                         </div>
                         <div class="card-body">
